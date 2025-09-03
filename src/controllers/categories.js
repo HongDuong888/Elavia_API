@@ -1,5 +1,6 @@
 import Category from "../models/categories.js";
 import mongoose from "mongoose";
+import Product from "../models/product.js";
 import {
   categorySchema,
   patchCategorySchema,
@@ -112,30 +113,49 @@ export const deleteCategory = async (req, res) => {
       });
     }
 
+    // 🔹 Kiểm tra danh mục con
     const childrenCount = await Category.countDocuments({ parentId: req.params.id });
     if (childrenCount > 0) {
-      const children = await Category.find({ parentId: req.params.id }).select('name');
-      const childrenNames = children.map(child => child.name).join(', ');
-      
+      const children = await Category.find({ parentId: req.params.id }).select("name");
+      const childrenNames = children.map(child => child.name).join(", ");
+
       return res.status(400).json({ 
         message: `Không thể xóa danh mục "${category.name}" vì còn ${childrenCount} danh mục con: ${childrenNames}`,
         error: `Không thể xóa danh mục "${category.name}" vì còn ${childrenCount} danh mục con: ${childrenNames}`,
         details: {
           categoryName: category.name,
           childrenCount,
-          childrenNames: children.map(child => child.name)
+          childrenNames: children.map(child => child.name),
         }
       });
     }
 
+    // 🔹 Kiểm tra sản phẩm trong danh mục
+    const productsCount = await Product.countDocuments({ categoryId: req.params.id });
+    if (productsCount > 0) {
+      const products = await Product.find({ categoryId: req.params.id }).select("name");
+      const productNames = products.map(p => p.name).slice(0, 5).join(", "); // chỉ show 5 sản phẩm đầu
+
+      return res.status(400).json({
+        message: `Không thể xóa danh mục "${category.name}" vì còn ${productsCount} sản phẩm.`,
+        error: `Danh mục "${category.name}" đang chứa sản phẩm.`,
+        details: {
+          categoryName: category.name,
+          productsCount,
+          exampleProducts: products.map(p => p.name).slice(0, 5), // trả về danh sách tên
+        }
+      });
+    }
+
+    // 🔹 Nếu không có con & không có sản phẩm → cho phép xóa
     await Category.findByIdAndDelete(req.params.id);
-    
+
     return res.status(200).json({
       message: `Xóa danh mục "${category.name}" thành công`,
       data: category,
     });
   } catch (error) {
-    console.error('Error deleting category:', error);
+    console.error("Error deleting category:", error);
     return res.status(500).json({
       message: "Lỗi hệ thống khi xóa danh mục",
       error: error.message,
