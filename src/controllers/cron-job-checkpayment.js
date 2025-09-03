@@ -55,35 +55,68 @@ const processMoMoOrder = async (order) => {
 
     switch (response.data.resultCode) {
       case 0:
-        if (!order.paymentDetails) {
-          const updateData = {
-            paymentStatus: "Đã thanh toán",
-            paymentDetails: {
+        console.log(`🔍 Order ${order.orderId} payment check:`, {
+          currentPaymentStatus: order.paymentStatus,
+          hasPaymentDetails: !!order.paymentDetails,
+          paymentDetails: order.paymentDetails
+        });
+        
+        // Kiểm tra nếu chưa có paymentDetails hoặc paymentStatus vẫn là "Chờ thanh toán"
+        if (!order.paymentDetails || order.paymentStatus === "Chờ thanh toán") {
+          const updateData = {};
+          
+          // Cập nhật paymentStatus nếu vẫn là "Chờ thanh toán"
+          if (order.paymentStatus === "Chờ thanh toán") {
+            updateData.paymentStatus = "Đã thanh toán";
+          }
+          
+          // Cập nhật paymentDetails nếu chưa có
+          if (!order.paymentDetails) {
+            updateData.paymentDetails = {
               momoTransactionId: response.data.transId,
               responseData: response.data,
-            },
-          };
+            };
+          }
 
-          // Thêm lịch sử thay đổi
-          statusHistory.push({
-            type: "payment",
-            from: order.paymentStatus,
-            to: "Đã thanh toán",
-            updatedBy: null, // Tự động bởi hệ thống
-            updatedAt: new Date(),
-            note: "Xác nhận thanh toán MoMo thành công",
-            reason: "Hệ thống xác nhận thanh toán MoMo",
-            isAutomatic: true,
-          });
+          // Thêm lịch sử thay đổi nếu có cập nhật paymentStatus
+          if (updateData.paymentStatus) {
+            statusHistory.push({
+              type: "payment",
+              from: order.paymentStatus,
+              to: "Đã thanh toán",
+              updatedBy: null, // Tự động bởi hệ thống
+              updatedAt: new Date(),
+              note: "Xác nhận thanh toán MoMo thành công",
+              reason: "Hệ thống xác nhận thanh toán MoMo",
+              isAutomatic: true,
+            });
+          }
 
-          await Order.updateOne(
+          console.log(`🔄 Updating order ${order.orderId} with data:`, updateData);
+          
+          const updateQuery = { $set: updateData };
+          if (statusHistory.length > 0) {
+            updateQuery.$push = { statusHistory: { $each: statusHistory } };
+          }
+          
+          const updateResult = await Order.updateOne(
             { orderId: order.orderId },
-            {
-              $set: updateData,
-              $push: { statusHistory: { $each: statusHistory } },
-            }
+            updateQuery
           );
-          console.log(`✅ MoMo order ${order.orderId} paid successfully`);
+          
+          console.log(`📝 Update result for ${order.orderId}:`, {
+            acknowledged: updateResult.acknowledged,
+            modifiedCount: updateResult.modifiedCount,
+            matchedCount: updateResult.matchedCount
+          });
+          
+          if (updateResult.modifiedCount > 0) {
+            console.log(`✅ MoMo order ${order.orderId} paid successfully`);
+          } else {
+            console.log(`⚠️ MoMo order ${order.orderId} was not updated - no documents modified`);
+          }
+        } else {
+          console.log(`ℹ️ MoMo order ${order.orderId} already processed - paymentStatus: ${order.paymentStatus}`);
         }
         break;
       case 1005:
@@ -151,35 +184,68 @@ const processZaloPayOrder = async (order) => {
 
     switch (response.data.return_code) {
       case 1:
-        if (!order.paymentDetails) {
-          const updateData = {
-            paymentStatus: "Đã thanh toán",
-            paymentDetails: {
+        console.log(`🔍 Order ${order.orderId} payment check:`, {
+          currentPaymentStatus: order.paymentStatus,
+          hasPaymentDetails: !!order.paymentDetails,
+          paymentDetails: order.paymentDetails
+        });
+        
+        // Kiểm tra nếu chưa có paymentDetails hoặc paymentStatus vẫn là "Chờ thanh toán"
+        if (!order.paymentDetails || order.paymentStatus === "Chờ thanh toán") {
+          const updateData = {};
+          
+          // Cập nhật paymentStatus nếu vẫn là "Chờ thanh toán"
+          if (order.paymentStatus === "Chờ thanh toán") {
+            updateData.paymentStatus = "Đã thanh toán";
+          }
+          
+          // Cập nhật paymentDetails nếu chưa có
+          if (!order.paymentDetails) {
+            updateData.paymentDetails = {
               zalopayTransactionId: response.data.zp_trans_id,
               responseData: response.data,
-            },
-          };
+            };
+          }
 
-          // Thêm lịch sử thay đổi
-          statusHistory.push({
-            type: "payment",
-            from: order.paymentStatus,
-            to: "Đã thanh toán",
-            updatedBy: null, // Tự động bởi hệ thống
-            updatedAt: new Date(),
-            note: "Xác nhận thanh toán ZaloPay thành công",
-            reason: "Hệ thống xác nhận thanh toán ZaloPay",
-            isAutomatic: true,
-          });
+          // Thêm lịch sử thay đổi nếu có cập nhật paymentStatus
+          if (updateData.paymentStatus) {
+            statusHistory.push({
+              type: "payment",
+              from: order.paymentStatus,
+              to: "Đã thanh toán",
+              updatedBy: null, // Tự động bởi hệ thống
+              updatedAt: new Date(),
+              note: "Xác nhận thanh toán ZaloPay thành công",
+              reason: "Hệ thống xác nhận thanh toán ZaloPay",
+              isAutomatic: true,
+            });
+          }
 
-          await Order.updateOne(
+          console.log(`🔄 Updating order ${order.orderId} with data:`, updateData);
+          
+          const updateQuery = { $set: updateData };
+          if (statusHistory.length > 0) {
+            updateQuery.$push = { statusHistory: { $each: statusHistory } };
+          }
+          
+          const updateResult = await Order.updateOne(
             { orderId: order.orderId },
-            {
-              $set: updateData,
-              $push: { statusHistory: { $each: statusHistory } },
-            }
+            updateQuery
           );
-          console.log(`✅ ZaloPay order ${order.orderId} paid successfully`);
+          
+          console.log(`📝 Update result for ${order.orderId}:`, {
+            acknowledged: updateResult.acknowledged,
+            modifiedCount: updateResult.modifiedCount,
+            matchedCount: updateResult.matchedCount
+          });
+          
+          if (updateResult.modifiedCount > 0) {
+            console.log(`✅ ZaloPay order ${order.orderId} paid successfully`);
+          } else {
+            console.log(`⚠️ ZaloPay order ${order.orderId} was not updated - no documents modified`);
+          }
+        } else {
+          console.log(`ℹ️ ZaloPay order ${order.orderId} already processed - paymentStatus: ${order.paymentStatus}`);
         }
         break;
       case 3:
