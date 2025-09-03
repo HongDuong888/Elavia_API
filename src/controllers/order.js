@@ -1133,7 +1133,7 @@ export const updateOrderStatus = async (req, res) => {
 
     // 2. Kiểm tra trạng thái được phép chuyển đổi
     const updateData = {};
-    const statusChanges = []; // Mảng lưu các thay đổi trạng thái
+    const statusChanges = [];
 
     // Xử lý paymentStatus riêng biệt
     if (paymentStatus) {
@@ -1143,7 +1143,6 @@ export const updateOrderStatus = async (req, res) => {
         )
       ) {
         updateData.paymentStatus = paymentStatus;
-        // Lưu lịch sử thay đổi payment status
         statusChanges.push({
           type: "payment",
           from: order.paymentStatus,
@@ -1161,9 +1160,8 @@ export const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // Xử lý shippingStatus riêng biệt - sử dụng admin transitions cho admin request
+    // Xử lý shippingStatus riêng biệt
     if (shippingStatus) {
-      // Kiểm tra xem có phải admin đang update không (có thể check qua role hoặc route)
       const isAdminUpdate =
         req.path.includes("/admin/") || req.user?.role === "admin";
       const allowedTransitions = isAdminUpdate
@@ -1173,14 +1171,12 @@ export const updateOrderStatus = async (req, res) => {
       if (allowedTransitions[order.shippingStatus]?.includes(shippingStatus)) {
         updateData.shippingStatus = shippingStatus;
 
-        // Xử lý đặc biệt cho COD khi giao hàng thành công
         if (
           shippingStatus === "Giao hàng thành công" &&
           order.paymentMethod === "COD" &&
           order.paymentStatus === "Thanh toán khi nhận hàng"
         ) {
           updateData.paymentStatus = "Đã thanh toán";
-          // Thêm lịch sử cho cả shipping và payment
           statusChanges.push({
             type: "payment",
             from: order.paymentStatus,
@@ -1193,7 +1189,6 @@ export const updateOrderStatus = async (req, res) => {
           });
         }
 
-        // Lưu lịch sử thay đổi shipping status
         statusChanges.push({
           type: "shipping",
           from: order.shippingStatus,
@@ -1211,16 +1206,14 @@ export const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // Xử lý status cũ (để tương thích ngược)
+    // Xử lý status cũ
     if (status) {
-      // Kiểm tra xem có phải admin đang update không
       const isAdminUpdate =
         req.path.includes("/admin/") || req.user?.role === "admin";
       const allowedTransitions = isAdminUpdate
         ? allowedAdminShippingStatusTransitions
         : allowedShippingStatusTransitions;
 
-      // Nếu trạng thái là trạng thái thanh toán
       if (
         allowedPaymentStatusTransitions[order.paymentStatus]?.includes(status)
       ) {
@@ -1238,7 +1231,6 @@ export const updateOrderStatus = async (req, res) => {
       } else if (allowedTransitions[order.shippingStatus]?.includes(status)) {
         updateData.shippingStatus = status;
 
-        // Xử lý đặc biệt cho COD khi giao hàng thành công
         if (
           status === "Giao hàng thành công" &&
           order.paymentMethod === "COD" &&
@@ -1274,17 +1266,46 @@ export const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // Chỉ cập nhật receiver
+    // Xử lý cập nhật thông tin người nhận
     if (receiver && typeof receiver === "object") {
-      if (receiver.name) updateData["receiver.name"] = receiver.name;
-      if (receiver.phone) updateData["receiver.phone"] = receiver.phone;
-      if (receiver.address) updateData["receiver.address"] = receiver.address;
-      if (receiver.wardName)
-        updateData["receiver.wardName"] = receiver.wardName;
-      if (receiver.districtName)
-        updateData["receiver.districtName"] = receiver.districtName;
-      if (receiver.cityName)
-        updateData["receiver.cityName"] = receiver.cityName;
+      // So sánh thông tin người nhận gửi lên với thông tin hiện tại
+      const isReceiverChanged =
+        receiver.name !== order.receiver.name ||
+        receiver.phone !== order.receiver.phone ||
+        receiver.address !== order.receiver.address ||
+        receiver.wardName !== order.receiver.wardName ||
+        receiver.districtName !== order.receiver.districtName ||
+        receiver.cityName !== order.receiver.cityName;
+
+      if (isReceiverChanged) {
+        // Chỉ kiểm tra trạng thái nếu thông tin người nhận thực sự thay đổi
+        if (["Chờ xác nhận", "Đã xác nhận"].includes(order.shippingStatus)) {
+          if (receiver.name) updateData["receiver.name"] = receiver.name;
+          if (receiver.phone) updateData["receiver.phone"] = receiver.phone;
+          if (receiver.address) updateData["receiver.address"] = receiver.address;
+          if (receiver.wardName)
+            updateData["receiver.wardName"] = receiver.wardName;
+          if (receiver.districtName)
+            updateData["receiver.districtName"] = receiver.districtName;
+          if (receiver.cityName)
+            updateData["receiver.cityName"] = receiver.cityName;
+
+          statusChanges.push({
+            type: "receiver",
+            from: JSON.stringify(order.receiver),
+            to: JSON.stringify(receiver),
+            updatedBy: req.user?.id || null,
+            updatedAt: new Date(),
+            note: note || "Cập nhật thông tin người nhận",
+            reason: reason || "",
+            isAutomatic: false,
+          });
+        } else {
+          return res.status(400).json({
+            message: `Không thể sửa thông tin người nhận khi trạng thái giao hàng là "${order.shippingStatus}".`,
+          });
+        }
+      }
     }
 
     // Xử lý cộng lại stock và hoàn tiền khi hủy đơn hàng
@@ -1295,7 +1316,6 @@ export const updateOrderStatus = async (req, res) => {
     let refundInfo = null;
     if (isOrderBeingCancelled) {
       try {
-        // 1. Cộng lại số lượng tồn kho cho từng sản phẩm/biến thể trong đơn hàng
         const session = await mongoose.startSession();
         session.startTransaction();
 
@@ -1311,27 +1331,14 @@ export const updateOrderStatus = async (req, res) => {
         session.endSession();
         console.log(`📦 Restored stock for cancelled order ${order.orderId}`);
 
-        // 2. Xử lý hoàn tiền
-        // Truyền user ID của admin thay vì string
         refundInfo = await processRefundForCancelledOrder(order, req.user.id);
 
-        // Cập nhật payment details nếu có thông tin hoàn tiền
         if (refundInfo.requiresRefund && order.paymentDetails) {
           updateData.paymentDetails = order.paymentDetails;
         }
 
-        // 3. Gửi thông báo hoàn tiền nếu cần
         if (refundInfo.requiresRefund) {
           try {
-            // await sendTelegramMessage(
-            //   `💸 Yêu cầu hoàn tiền (Admin)!\n` +
-            //     `📋 Mã đơn: ${order.orderId}\n` +
-            //     `💰 Số tiền: ${order.finalAmount.toLocaleString("vi-VN")}đ\n` +
-            //     `💳 Phương thức: ${order.paymentMethod}\n` +
-            //     `👤 Hủy bởi: ${req.user?.email || "Admin"}\n` +
-            //     `📧 Khách hàng: ${order.user.email}\n` +
-            //     `🔄 Trạng thái: ${refundInfo.message}`
-            // );
             console.log("Thông báo qua tele");
           } catch (err) {
             console.error("Gửi thông báo Telegram thất bại:", err);
@@ -1339,7 +1346,6 @@ export const updateOrderStatus = async (req, res) => {
         }
       } catch (stockError) {
         console.error("Error restoring stock for cancelled order:", stockError);
-        // Không throw error để không block việc cập nhật status
       }
     }
 
@@ -1348,10 +1354,9 @@ export const updateOrderStatus = async (req, res) => {
       updateData.statusHistory = statusChanges;
     }
 
-    // 4. Cập nhật đơn hàng
+    // Cập nhật đơn hàng
     let updatedOrder;
     if (statusChanges.length > 0) {
-      // Nếu có thay đổi trạng thái, dùng $set và $push riêng biệt
       const { statusHistory, ...setData } = updateData;
       await Order.findByIdAndUpdate(id, {
         $set: setData,
@@ -1361,7 +1366,6 @@ export const updateOrderStatus = async (req, res) => {
         "items.productVariantId"
       );
     } else {
-      // Chỉ update thông tin khác
       updatedOrder = await Order.findByIdAndUpdate(
         id,
         { $set: updateData },
@@ -1374,7 +1378,6 @@ export const updateOrderStatus = async (req, res) => {
       data: updatedOrder,
     };
 
-    // Thêm thông tin hoàn tiền vào response nếu có
     if (refundInfo) {
       response.refundInfo = refundInfo;
       if (refundInfo.requiresRefund) {
